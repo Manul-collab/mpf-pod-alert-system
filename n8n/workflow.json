@@ -1,0 +1,516 @@
+{
+  "name": "Pod-alert-system",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "device_key",
+              "value": "={{ $json.device_key }}"
+            },
+            {
+              "name": "title",
+              "value": "={{ $json.title }}"
+            },
+            {
+              "name": "body",
+              "value": "={{ $json.body }}"
+            },
+            {
+              "name": "level",
+              "value": "={{ $json.level }}"
+            },
+            {
+              "name": "volume",
+              "value": "={{ $json.volume }}"
+            },
+            {
+              "name": "sound",
+              "value": "={{ $json.sound }}"
+            },
+            {
+              "name": "call",
+              "value": "={{ $json.call }}"
+            },
+            {
+              "name": "={{ $json.group }}",
+              "value": "PodAlert"
+            },
+            {
+              "name": "url",
+              "value": "={{ $json.discordUrl }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        880,
+        608
+      ],
+      "id": "29eec291-330f-44cd-a84b-20a38db7bd90",
+      "name": "HTTP Request",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pod-alert",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -624,
+        352
+      ],
+      "id": "d9a3eebf-3b2a-424f-b408-32e2601279a4",
+      "name": "Pod Alert System",
+      "webhookId": "{{N8N_WEBHOOK_ID}}"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// SIGNATURE CHECK\n// Перевірка підпису Ed25519 від Discord\n//\n// Discord підписує кожен запит приватним ключем, ми перевіряємо\n// публічним. Discord навмисно шле запити зі зламаним підписом —\n// на них треба відповісти 401, інакше endpoint не приймається.\n// ============================================================\n\nconst crypto = require('crypto');\n\nconst item = $('Pod Alert System').first();\nconst cfg  = $('Pod alert config').first().json;\n\nconst publicKey = cfg.publicKey;\nconst headers   = item.json.headers || {};\n\nconst signature = headers['x-signature-ed25519'];\nconst timestamp = headers['x-signature-timestamp'];\n\n// ---- Сире тіло запиту ----\n// Підпис рахується над байтами, які надіслав Discord.\n// Будь-яка переробка JSON ламає перевірку.\nlet rawBody = null;\n\nif (item.binary?.data?.data) {\n  rawBody = Buffer.from(item.binary.data.data, 'base64').toString('utf8');\n} else if (typeof item.json.body === 'string') {\n  rawBody = item.json.body;\n}\n\nif (!signature || !timestamp || rawBody === null) {\n  return [{\n    json: {\n      valid: false,\n      reason: rawBody === null\n        ? 'Raw Body вимкнений у ноді Webhook'\n        : 'Відсутні заголовки підпису'\n    }\n  }];\n}\n\n// ---- Перевірка ----\nlet valid = false;\n\ntry {\n  const key = crypto.createPublicKey({\n    key: Buffer.from('302a300506032b6570032100' + publicKey, 'hex'),\n    format: 'der',\n    type: 'spki'\n  });\n\n  valid = crypto.verify(\n    null,\n    Buffer.from(timestamp + rawBody, 'utf8'),\n    key,\n    Buffer.from(signature, 'hex')\n  );\n} catch (e) {\n  return [{ json: { valid: false, reason: `Помилка перевірки: ${e.message}` } }];\n}\n\nif (!valid) {\n  return [{ json: { valid: false, reason: 'Невірний підпис' } }];\n}\n\n// ---- Підпис валідний, розбираємо взаємодію ----\nconst interaction = JSON.parse(rawBody);\n\nreturn [{\n  json: {\n    valid: true,\n    type:        interaction.type,        // 1 PING, 2 команда, 3 компонент\n    commandName: interaction.data?.name ?? null,\n    customId:    interaction.data?.custom_id ?? null,\n    values:      interaction.data?.values ?? null,\n    channelId:   interaction.channel_id,\n    callerId:    interaction.member?.user?.id ?? interaction.user?.id ?? null,\n    interaction\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -176,
+        352
+      ],
+      "id": "9db2e108-c505-4130-a108-065e53c770b0",
+      "name": "Signature check"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// POD ALERT — конфігурація\n// Єдине місце, де змінюються параметри виклику\n// ============================================================\n\nconst CONFIG = {\n  barkServer: '{{BARK_SERVER_URL}}',\n\n  // Discord\n  applicationId:  '{{DISCORD_APPLICATION_ID}}',\n  publicKey:      '{{DISCORD_PUBLIC_KEY}}',\n  guildId:        '{{DISCORD_GUILD_ID}}',\n  allowedChannel: '{{DISCORD_ALLOWED_CHANNEL_ID}}',\n\n  // Текст сповіщення\n  title: 'Pod alert',\n  body:  'Викликаємо в Discord',\n\n  traders: {\n    trader1: {\n      name:      'trader1',\n      barkKey:   '{{BARK_KEY_TRADER_1}}',\n      discordId: '{{DISCORD_ID_TRADER_1}}',\n      level:     'critical',\n      volume:    10,\n      sound:     'sherwoodforest',\n      call:      1\n    },\n    trader2: {\n      name:      'trader2',\n      barkKey:   '{{BARK_KEY_TRADER_2}}',\n      discordId: '{{DISCORD_ID_TRADER_2}}',\n      level:     'critical',\n      volume:    10,\n      sound:     'sherwoodforest',\n      call:      1\n    },\n    trader3: {\n      name:      'trader3',\n      barkKey:   '{{BARK_KEY_TRADER_3}}',\n      discordId: '{{DISCORD_ID_TRADER_3}}',\n      level:     'critical',\n      volume:    10,\n      sound:     'sherwoodforest',\n      call:      1\n    },\n    trader4: {\n      name:      'trader4',\n      barkKey:   '{{BARK_KEY_TRADER_4}}',\n      discordId: '{{DISCORD_ID_TRADER_4}}',\n      level:     'critical',\n      volume:    10,\n      sound:     'sherwoodforest',\n      call:      1\n    },\n    trader5: {\n      name:      'trader5',\n      barkKey:   '{{BARK_KEY_TRADER_5}}',\n      discordId: '{{DISCORD_ID_TRADER_5}}',\n      level:     'critical',\n      volume:    10,\n      sound:     'sherwoodforest',\n      call:      1\n    }\n  }\n};\n\n// Геттер не переживає серіалізацію між нодами — збираємо рядок одразу\nCONFIG.discordLink = `https://discord.com/channels/${CONFIG.guildId}/${CONFIG.allowedChannel}`;\n\nreturn [{ json: CONFIG }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -384,
+        352
+      ],
+      "id": "56c87d10-fb45-424b-a500-cb9b5a462b7e",
+      "name": "Pod alert config"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "f602ddc1-ff66-40f3-b06a-b12766beef42",
+                    "leftValue": "={{ $json.valid }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "233b5d36-13ee-4534-ba18-5136a36a83d8",
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": 1,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "edab603c-fe00-4970-853c-34d12bf7bb1e",
+                    "leftValue": "={{ $json.commandName }}",
+                    "rightValue": "trader",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "6e122597-bebc-46a7-a670-c242677aa8bc",
+                    "leftValue": "={{ $json.type }}",
+                    "rightValue": 3,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "allMatchingOutputs": true
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        32,
+        320
+      ],
+      "id": "9ac32033-757e-4699-9849-244e85f87bb2",
+      "name": "Switch2"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "invalid request signature",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        224,
+        112
+      ],
+      "id": "2e5d94db-862a-4879-b981-2351a95a513b",
+      "name": "Respond to Webhook_valid"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.payload }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        880,
+        448
+      ],
+      "id": "97de7510-e080-44b3-af2a-2569a03110e1",
+      "name": "Respond to Webhook_trader"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"type\": 1}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        224,
+        272
+      ],
+      "id": "1dc35c86-42a4-4c11-a8ba-7a7e5a2c2c8f",
+      "name": "Respond to Webhook_type1"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ type: 4, data: { content: $json.denied ? $json.message : `Сигнал надіслано: ${$json.summary}`, flags: 64 } }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        640,
+        608
+      ],
+      "id": "d7c930bf-9544-487b-ba7c-e312c5460dc0",
+      "name": "Respond to Webhook_type3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg    = $('Pod alert config').first().json;\nconst caller = $('Signature check').first().json.callerId;\n\nconst options = Object.entries(cfg.traders)\n  .map(([key, t]) => ({ label: t.name, value: key }));\n\nreturn [{\n  json: {\n    payload: {\n      type: 4,\n      data: {\n        content: 'Кого викликати?',\n        flags: 64,\n        components: [{\n          type: 1,\n          components: [{\n            type: 3,\n            custom_id: 'trader_select',\n            placeholder: 'Оберіть трейдерів',\n            min_values: 1,\n            max_values: options.length,\n            options\n          }]\n        }]\n      }\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        448
+      ],
+      "id": "811959fe-0a49-404d-aae5-0dbeb0d61de3",
+      "name": "menu"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg    = $('Pod alert config').first().json;\nconst sig    = $('Signature check').first().json;\nconst caller = sig.callerId;\n\n// Канал: додаткова перевірка поверх прав Discord\nif (sig.channelId !== cfg.allowedChannel) {\n  return [{\n    json: {\n      denied: true,\n      message: 'Команда доступна лише у визначеному каналі'\n    }\n  }];\n}\n\nconst keys = sig.values ?? [];\n\nconst targets = keys.filter(k => cfg.traders[k]);\n\nif (!targets.length) {\n  return [{ json: { denied: true, message: 'Немає кому надсилати' } }];\n}\n\nconst summary = targets.map(k => cfg.traders[k].name).join(', ');\n\nreturn targets.map(key => {\n  const t = cfg.traders[key];\n  return {\n    json: {\n      denied:     false,\n      summary,\n      url:        `${cfg.barkServer}/push`,\n      device_key: t.barkKey,\n      title:      cfg.title,\n      body:       cfg.body,\n      level:      t.level,\n      volume:     t.volume,\n      sound:      t.sound,\n      call:       t.call,\n      group:      'PodAlert',\n      discordUrl: cfg.discordLink,\n      targetName: t.name\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        608
+      ],
+      "id": "14c5afed-9489-443a-b46c-5b4ccd4ce4c3",
+      "name": "command_trader"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// QUIET HOURS\n// Нічний режим: з 22:00 до 08:00 за Києвом сигнал не йде\n// ============================================================\n\nconst QUIET_FROM = 22;   // включно\nconst QUIET_TO   = 8;    // не включно\n\nconst now = new Date();\n\nconst parts = new Intl.DateTimeFormat('en-GB', {\n  timeZone:  'Europe/Kyiv',\n  hour:      '2-digit',\n  minute:    '2-digit',\n  hourCycle: 'h23'\n}).formatToParts(now);\n\nconst hour   = Number(parts.find(p => p.type === 'hour').value);\nconst minute = parts.find(p => p.type === 'minute').value;\n\n// Інтервал перетинає північ, тому умова через АБО\nconst quiet = hour >= QUIET_FROM || hour < QUIET_TO;\n\nconst localTime = `${String(hour).padStart(2, '0')}:${minute}`;\n\nreturn [{\n  json: {\n    quiet,\n    localTime,\n    message: quiet\n      ? `Нічний режим: сигнал не надсилається з ${QUIET_FROM}:00 до 0${QUIET_TO}:00 за Києвом. Зараз ${localTime}.`\n      : null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        432
+      ],
+      "id": "dbbcd3b0-a5b4-4076-bd69-31f35296fa38",
+      "name": "Time limit"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ type: 4, data: { content: $json.message, flags: 64 } }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        640,
+        304
+      ],
+      "id": "796c1e76-d495-41e7-b8a3-ef6faa8ade69",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "21d6c6f5-a745-4ad5-b503-dc884f3ffa7a",
+              "leftValue": "={{ $json.quiet }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        416,
+        432
+      ],
+      "id": "45637037-019d-41e2-a544-6e5f9c58bb0d",
+      "name": "If2"
+    }
+  ],
+  "connections": {
+    "Pod Alert System": {
+      "main": [
+        [
+          {
+            "node": "Pod alert config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature check": {
+      "main": [
+        [
+          {
+            "node": "Switch2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pod alert config": {
+      "main": [
+        [
+          {
+            "node": "Signature check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch2": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook_valid",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook_type1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Time limit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "command_trader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook_type3": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "menu": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook_trader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "command_trader": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook_type3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Time limit": {
+      "main": [
+        [
+          {
+            "node": "If2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If2": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "menu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timezone": "Europe/Kyiv",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {},
+  "meta": {
+    "exportedFrom": "n8n workflow Pod-alert-system, versionId 09b35a03-b1aa-4e89-ac33-a696edb2e496",
+    "exportedAt": "2026-11-03",
+    "sanitized": "secrets and IDs replaced with {{NAME}} placeholders, see SECRETS.md"
+  }
+}
